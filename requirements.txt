@@ -6,3 +6,5 @@ torch>=2.3,<3
 torch-geometric>=2.5,<3
 scikit-learn>=1.4,<2
 matplotlib>=3.8,<4
+streamlit>=1.40,<2
+plotly>=5.24,<7

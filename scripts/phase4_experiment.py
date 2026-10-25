@@ -23,12 +23,14 @@ from congestion_sim.topology import build_default_topology
 STRATEGIES = ("static", "reactive", "gru", "gnn")
 
 def run_one(scenario: str, seed: int, strategy: str, artifact_dir: Path,
-            steps: int = 80) -> tuple[pd.DataFrame, list[dict], dict]:
+            steps: int = 80, predictor_override=None) -> tuple[pd.DataFrame, list[dict], dict]:
     topology = build_default_topology()
     simulator = NetworkSimulator(topology, seed=seed * 1009 + SCENARIOS.index(scenario))
     simulator.set_scenario_horizon(steps)
     profile = ScenarioTrafficProfile(kind=scenario)
-    predictor = OnsetPredictor(f"{strategy}_onset", artifact_dir, topology) if strategy in {"gru", "gnn"} else None
+    predictor = predictor_override
+    if predictor is None and strategy in {"gru", "gnn"}:
+        predictor = OnsetPredictor(f"{strategy}_onset", artifact_dir, topology)
     controller = RoutingController(topology, strategy, predictor, decision_delay=2, cooldown=6)
     measurements, logs = [], []
     for step in range(steps):

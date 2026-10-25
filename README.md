@@ -167,3 +167,65 @@ python scripts/train_onset.py --seeds 25 --seed-start 2000 --steps 80 --window 1
 ```
 
 Scenarios include a gradual ramp, sustained bottleneck, periodic load, AR(1)-correlated demand, and a seeded unannounced four-step burst. Congestion, drops, delays, and queue occupancy arise from packet arrivals and per-link service. Outputs include split data, checkpoints, scenario and event metrics, PR curves, event timelines, and `DIAGNOSTIC_REPORT.md`. All results are simulated. Verify with `python -m unittest discover -s tests -v`.
+
+## Phase 5: interactive network monitoring dashboard
+
+Install project dependencies from the repository root, then launch Streamlit:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m streamlit run dashboard/app.py
+```
+
+The dashboard reads the saved Phase 4 log and paired strategy metrics, plus
+Phase 3.6 test metrics, preprocessing, thresholds, and GRU/GNN checkpoints.
+Expected files are under `results/phase4/` and `results/phase3_6/`; these are
+generated artifacts and intentionally ignored by Git. If they are absent,
+reproduce them with the Phase 3.6 and Phase 4 commands above. The dashboard
+reports missing files instead of substituting metrics.
+
+### Dashboard sections
+
+- **Live monitor** replays one exact scenario, strategy, and seed from Phase 4,
+  or executes a new 80-step simulation when **Run a new simulation** is chosen.
+  Playback, link inspection, and route highlighting use recorded or newly
+  generated simulator outputs.
+- **Routing comparison** plots saved Phase 4 per-run metrics across four
+  strategies and shows scenario-level means and seed-paired changes versus
+  static Dijkstra.
+- **Model performance** shows held-out Phase 3.6 event precision, recall, F1,
+  PR-AUC, false alerts per run, lead time, and scenario breakdown.
+- **Demo guide** provides the periodic replay walkthrough.
+
+The topology shows physical links as edges and reports the two directional
+measurements separately when a link is inspected. Solid edge colors show
+observed utilization; dashed violet marks model risk above its saved threshold
+before observed congestion. The event timeline uses events from the same
+scenario/strategy/seed. It takes controller outcomes from the contextual event
+rows embedded in `simulation_log.csv`; the separate `routing_decisions.csv`
+lacks run identifiers and is not joined to replay data.
+
+New simulations use the existing Phase 4 simulator and controller, the
+existing causal Phase 3.6 feature pipeline, and cached checkpoints and
+validation thresholds. Playback advances through measured intervals; it does
+not animate packet movement.
+
+All measurements remain simulated. Delivery and loss are hop-level proxies,
+and throughput is a sum of link-hop Mbps because the simulator does not track
+packet identity end-to-end. The onset models were trained under static
+routing and can experience distribution shift in closed loop. The saved
+Phase 3.6 results show the GRU outperforming the GNN on event precision and F1;
+neither model has demonstrated broad generalization.
+
+### Troubleshooting
+
+- **Missing results/checkpoints:** run the documented Phase 3.6 training and
+  Phase 4 final experiment commands, then restart Streamlit.
+- **Port already in use:** use `python -m streamlit run dashboard/app.py --server.port 8502`.
+- **Slow first load:** the Phase 4 log is read once and cached for the session.
+- **Live model run fails:** verify both onset checkpoints, `preprocessing.json`,
+  and `frozen_selection.json` under `results/phase3_6/`.
+- **Dependency installation fails:** use Python 3.11 or newer and install the
+  full `requirements.txt` in the active project environment.
