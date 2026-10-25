@@ -68,6 +68,49 @@ class LinkGRU(nn.Module):
         return prediction
 
 
+class TemporalOnsetGNN(nn.Module):
+    """Temporal GNN with a dedicated binary onset logit per directed link."""
+
+    def __init__(self, input_dim: int, hidden_dim: int = 32, dropout: float = 0.2):
+        super().__init__()
+        self.gcn1 = GCNConv(input_dim, hidden_dim, add_self_loops=True, normalize=True)
+        self.gcn2 = GCNConv(hidden_dim, hidden_dim, add_self_loops=True, normalize=True)
+        self.dropout = nn.Dropout(dropout)
+        self.gru = nn.GRU(hidden_dim, hidden_dim, batch_first=True)
+        self.classifier = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        if x.ndim != 4 or edge_index.ndim != 2 or edge_index.shape[0] != 2:
+            raise ValueError("Expected x [batch,time,nodes,features] and edge_index [2,edges]")
+        batch, steps, nodes, features = x.shape
+        batched_edges = batch_edge_index(edge_index, batch * steps, nodes)
+        spatial = x.reshape(batch * steps * nodes, features)
+        spatial = self.dropout(torch.relu(self.gcn1(spatial, batched_edges)))
+        spatial = self.dropout(torch.relu(self.gcn2(spatial, batched_edges)))
+        spatial = spatial.reshape(batch, steps, nodes, -1).permute(0, 2, 1, 3)
+        temporal = spatial.reshape(batch * nodes, steps, -1)
+        _, hidden = self.gru(temporal)
+        return self.classifier(self.dropout(hidden[-1])).reshape(batch, nodes)
+
+
+class TemporalOnsetGRU(nn.Module):
+    """Non-graph onset classifier with exactly the same temporal inputs."""
+
+    def __init__(self, input_dim: int, hidden_dim: int = 32, dropout: float = 0.2):
+        super().__init__()
+        self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
+        self.dropout = nn.Dropout(dropout)
+        self.classifier = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor | None = None) -> torch.Tensor:
+        if x.ndim != 4:
+            raise ValueError("Expected x [batch,time,nodes,features]")
+        batch, steps, nodes, features = x.shape
+        temporal = x.permute(0, 2, 1, 3).reshape(batch * nodes, steps, features)
+        _, hidden = self.gru(temporal)
+        return self.classifier(self.dropout(hidden[-1])).reshape(batch, nodes)
+
+
 def parameter_count(model: nn.Module) -> int:
     return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
 

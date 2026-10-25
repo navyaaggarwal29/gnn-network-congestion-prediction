@@ -96,3 +96,15 @@ To reproduce the earlier tests and the Phase 3.5 experiment environment:
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 ```
+
+## Phase 3.6: traffic scenarios and onset classification
+
+Phase 3.6 preserves the original traffic profiles and adds five seeded scenarios with fixed flow routes per run. The dedicated onset models use causal utilization, queue, offered-load, variability, and drop-history features. An onset is a first 85% utilization crossing within the prediction horizon, conditioned on being below threshold at decision time. GNN and non-graph GRU classifiers use positive weights derived from training labels only; no artificial balancing is used. Validation selects model and threshold before final test evaluation. Overlapping alerts are merged into episodes so one congestion onset is counted once.
+
+Reproduce on CPU:
+
+```bash
+python scripts/train_onset.py --seeds 25 --seed-start 2000 --steps 80 --window 10 --horizon 5 --epochs 16 --hidden 24 --decision-delay 2 --out results/phase3_6 --device cpu
+```
+
+Scenarios include a gradual ramp, sustained bottleneck, periodic load, AR(1)-correlated demand, and a seeded unannounced four-step burst. Congestion, drops, delays, and queue occupancy arise from packet arrivals and per-link service. Outputs include split data, checkpoints, scenario and event metrics, PR curves, event timelines, and `DIAGNOSTIC_REPORT.md`. All results are simulated. Verify with `python -m unittest discover -s tests -v`.

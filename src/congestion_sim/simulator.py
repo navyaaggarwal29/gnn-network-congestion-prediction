@@ -38,6 +38,62 @@ class TrafficProfile:
         return self.mean_demand_mbps
 
 
+@dataclass(frozen=True)
+class ScenarioTrafficProfile:
+    """Temporally structured aggregate demand used by Phase 3.6 experiments.
+
+    Rates are offered Mbps over one simulator interval. Scenario flow paths are
+    fixed for a run; queues, utilization, delay, and loss still emerge from the
+    ordinary packet service and finite-buffer mechanics.
+    """
+
+    kind: Literal["gradual_ramp", "sustained_bottleneck", "periodic",
+                  "correlated", "sudden_burst"]
+    base_demand_mbps: float = 40.0
+    peak_demand_mbps: float = 180.0
+    period_steps: int = 24
+
+    def __post_init__(self) -> None:
+        supported = {"gradual_ramp", "sustained_bottleneck", "periodic", "correlated", "sudden_burst"}
+        if self.kind not in supported:
+            raise ValueError(f"Unsupported scenario profile: {self.kind}")
+        if self.base_demand_mbps <= 0 or self.peak_demand_mbps < self.base_demand_mbps or self.period_steps < 2:
+            raise ValueError("Scenario demand parameters are invalid")
+
+    def demand(self, step: int, steps: int, rng: np.random.Generator,
+               state: dict[str, float | int]) -> float:
+        """Return current demand and retain only past state for correlated input."""
+        if self.kind == "gradual_ramp":
+            ramp_end = max(1, int(steps * 0.65))
+            fraction = min(1.0, step / ramp_end)
+            return self.base_demand_mbps + fraction * (self.peak_demand_mbps - self.base_demand_mbps)
+        if self.kind == "sustained_bottleneck":
+            # A measurable low-load baseline lets the run contain an actual
+            # onset before the queue remains loaded for the rest of the run.
+            warmup = max(3, int(steps * 0.15))
+            return self.base_demand_mbps if step < warmup else self.peak_demand_mbps
+        if self.kind == "periodic":
+            amplitude = (self.peak_demand_mbps - self.base_demand_mbps) / 2
+            # Start at the trough, then rise; the phase itself is predictable.
+            return self.base_demand_mbps + amplitude * (1 - np.cos(2 * np.pi * step / self.period_steps))
+        if self.kind == "correlated":
+            # Common AR(1) demand factor creates correlated load across fixed flows.
+            base = max(self.base_demand_mbps, 80.0)
+            previous = float(state.get("factor", 1.0))
+            factor = max(0.25, 1.0 + 0.88 * (previous - 1.0) + float(rng.normal(0, 0.12)))
+            state["factor"] = factor
+            return min(self.peak_demand_mbps, max(base, base * factor))
+        if "burst_start" not in state:
+            low = max(1, int(steps * 0.30))
+            high = max(low + 1, int(steps * 0.75))
+            state["burst_start"] = int(rng.integers(low, high))
+        burst_start = int(state["burst_start"])
+        # Four-step unannounced pulse; demand returns to baseline immediately.
+        if burst_start <= step < burst_start + 4:
+            return self.peak_demand_mbps
+        return self.base_demand_mbps
+
+
 class NetworkSimulator:
     """Simulate traffic and link-level measurements at fixed time intervals.
 
@@ -61,20 +117,45 @@ class NetworkSimulator:
             self._queues[(u, v)] = 0.0
             self._queues[(v, u)] = 0.0
         self._step = 0
+        self._scenario_state: dict[str, float | int] = {}
+        self._scenario_steps: int | None = None
+        self._scenario_paths: list[list[str]] | None = None
+        self._scenario_weights: np.ndarray | None = None
 
-    def step(self, profile: TrafficProfile | None = None) -> pd.DataFrame:
+    def _init_scenario(self, profile: ScenarioTrafficProfile) -> None:
+        routers = self.topology.routers
+        if profile.kind == "sustained_bottleneck":
+            # Multiple flows share a fixed shortest path with a 50 Mbps hop.
+            pairs = [("R1", "R5")] * 8 if {"R1", "R5"}.issubset(routers) else [(routers[0], routers[-1])] * 8
+        else:
+            # Half the independent conversations traverse the same low-capacity
+            # hop; the remaining flows use varied paths to preserve background load.
+            pairs = [("R1", "R5")] * 4 if {"R1", "R5"}.issubset(routers) else []
+            pairs.extend((routers[i % len(routers)], routers[(i * 3 + 4) % len(routers)])
+                         for i in range(len(pairs), 8))
+            pairs = [(a, b if b != a else routers[(routers.index(a) + 1) % len(routers)]) for a, b in pairs]
+        self._scenario_paths = [self.topology.shortest_path(source, destination) for source, destination in pairs]
+        self._scenario_weights = self._rng.dirichlet(np.ones(len(pairs)))
+
+    def step(self, profile: TrafficProfile | ScenarioTrafficProfile | None = None) -> pd.DataFrame:
         """Advance one interval, returning one simulated measurement per link."""
         profile = profile or TrafficProfile()
-        offered_mbps = profile.demand(self._step)
-        routers = self.topology.routers
+        if isinstance(profile, ScenarioTrafficProfile):
+            if self._scenario_paths is None:
+                self._init_scenario(profile)
+            offered_mbps = profile.demand(self._step, self._scenario_steps or 0, self._rng, self._scenario_state)
+            weights = self._scenario_weights
+            paths = self._scenario_paths
+        else:
+            profile = profile or TrafficProfile()
+            offered_mbps = profile.demand(self._step)
+            routers = self.topology.routers
+            # Legacy profile paths and shares remain independently sampled per tick.
+            flow_count = max(4, len(routers) // 2)
+            weights = self._rng.dirichlet(np.ones(flow_count))
+            paths = [self.topology.shortest_path(*self._py_rng.sample(routers, 2)) for _ in weights]
         flows = []
-        # Multiple independently sampled conversations make load distribution
-        # observable while keeping total offered rate equal to the profile rate.
-        flow_count = max(4, len(routers) // 2)
-        weights = self._rng.dirichlet(np.ones(flow_count))
-        for weight in weights:
-            source, destination = self._py_rng.sample(routers, 2)
-            path = self.topology.shortest_path(source, destination)
+        for path, weight in zip(paths, weights):
             expected_packets = offered_mbps * float(weight) * 1_000_000 * self.interval_seconds / (self.packet_size_bytes * 8)
             packet_count = int(np.floor(expected_packets)) + int(self._rng.random() < expected_packets % 1)
             flows.append((path, packet_count))
@@ -138,8 +219,10 @@ class NetworkSimulator:
         self._step += 1
         return result
 
-    def run(self, steps: int, profile: TrafficProfile | None = None) -> pd.DataFrame:
+    def run(self, steps: int, profile: TrafficProfile | ScenarioTrafficProfile | None = None) -> pd.DataFrame:
         """Run a profile for ``steps`` intervals and concatenate link metrics."""
         if steps < 1:
             raise ValueError("steps must be at least 1")
+        if isinstance(profile, ScenarioTrafficProfile):
+            self._scenario_steps = steps
         return pd.concat([self.step(profile) for _ in range(steps)], ignore_index=True)
