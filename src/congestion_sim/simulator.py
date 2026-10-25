@@ -120,7 +120,9 @@ class NetworkSimulator:
         self._scenario_state: dict[str, float | int] = {}
         self._scenario_steps: int | None = None
         self._scenario_paths: list[list[str]] | None = None
+        self._scenario_pairs: list[tuple[str, str]] | None = None
         self._scenario_weights: np.ndarray | None = None
+        self._last_flow_state: list[dict[str, object]] = []
 
     def _init_scenario(self, profile: ScenarioTrafficProfile) -> None:
         routers = self.topology.routers
@@ -135,7 +137,36 @@ class NetworkSimulator:
                          for i in range(len(pairs), 8))
             pairs = [(a, b if b != a else routers[(routers.index(a) + 1) % len(routers)]) for a, b in pairs]
         self._scenario_paths = [self.topology.shortest_path(source, destination) for source, destination in pairs]
+        self._scenario_pairs = pairs
         self._scenario_weights = self._rng.dirichlet(np.ones(len(pairs)))
+
+    @property
+    def flow_state(self) -> list[dict[str, object]]:
+        """Current persistent scenario flows; routes can be changed between ticks."""
+        state = [dict(flow) for flow in self._last_flow_state]
+        if self._scenario_paths is not None:
+            for flow in state:
+                flow["route"] = list(self._scenario_paths[int(flow["flow_id"])])
+        return state
+
+    def reroute_scenario_flow(self, flow_id: int, route: list[str]) -> None:
+        """Assign a validated simple route to a persistent scenario flow."""
+        if self._scenario_paths is None or self._scenario_pairs is None:
+            raise RuntimeError("Persistent scenario flows have not been initialized")
+        if not 0 <= flow_id < len(self._scenario_paths):
+            raise IndexError("Unknown scenario flow")
+        source, destination = self._scenario_pairs[flow_id]
+        if not route or route[0] != source or route[-1] != destination or len(route) != len(set(route)):
+            raise ValueError("Route must be loop-free and preserve flow endpoints")
+        if any(not self.topology.graph.has_edge(a, b) for a, b in zip(route, route[1:])):
+            raise ValueError("Route contains a nonexistent physical link")
+        self._scenario_paths[flow_id] = list(route)
+
+    def set_scenario_horizon(self, steps: int) -> None:
+        """Set total run length when advancing a scenario one step at a time."""
+        if steps < 1 or self._step != 0:
+            raise ValueError("Scenario horizon must be positive and set before simulation starts")
+        self._scenario_steps = steps
 
     def step(self, profile: TrafficProfile | ScenarioTrafficProfile | None = None) -> pd.DataFrame:
         """Advance one interval, returning one simulated measurement per link."""
@@ -159,6 +190,15 @@ class NetworkSimulator:
             expected_packets = offered_mbps * float(weight) * 1_000_000 * self.interval_seconds / (self.packet_size_bytes * 8)
             packet_count = int(np.floor(expected_packets)) + int(self._rng.random() < expected_packets % 1)
             flows.append((path, packet_count))
+
+        if isinstance(profile, ScenarioTrafficProfile):
+            self._last_flow_state = [
+                {"flow_id": i, "source_router": self._scenario_pairs[i][0],
+                 "destination_router": self._scenario_pairs[i][1], "route": list(path),
+                 "offered_demand_mbps": offered_mbps * float(weights[i]),
+                 "packets_offered": packet_count}
+                for i, (path, packet_count) in enumerate(flows)
+            ]
 
         arrivals: dict[tuple[str, str], float] = {key: 0.0 for key in self._queues}
         demand_by_link: dict[tuple[str, str], float] = {key: 0.0 for key in self._queues}
@@ -224,5 +264,5 @@ class NetworkSimulator:
         if steps < 1:
             raise ValueError("steps must be at least 1")
         if isinstance(profile, ScenarioTrafficProfile):
-            self._scenario_steps = steps
+            self.set_scenario_horizon(steps)
         return pd.concat([self.step(profile) for _ in range(steps)], ignore_index=True)

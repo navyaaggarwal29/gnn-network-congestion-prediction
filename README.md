@@ -1,5 +1,64 @@
 # Graph Neural Network-Based Network Congestion Prediction
 
+## Phase 4: Experimental closed-loop routing
+
+Phase 4 adds a reproducible, simulator-only comparison of static Dijkstra,
+reactive congestion-aware routing, Phase 3.6 GRU onset routing, and Phase 3.6
+GNN onset routing. It is an experiment, not a production routing system. The
+controllers run against live measurements from their own controlled runs; no
+predictions are replayed from a static-routing trace. The saved Phase 3.6
+feature order, training-only normalization, checkpoints, and validation-picked
+thresholds are loaded from `results/phase3_6`.
+
+Run a separate one-seed-per-scenario controller pilot first:
+
+```bash
+PYTHONPATH=src MPLCONFIGDIR=/tmp/gnn_mpl venv/bin/python scripts/phase4_experiment.py --mode pilot --steps 80
+```
+
+Then run the frozen comparison with five fresh, paired seeds per traffic
+scenario (seeds 3000–3004):
+
+```bash
+PYTHONPATH=src MPLCONFIGDIR=/tmp/gnn_mpl venv/bin/python scripts/phase4_experiment.py --mode final --steps 80 --seeds 5
+```
+
+Outputs are written to ignored generated-artifact directories:
+
+- Pilot: `results/phase4_pilot/`
+- Final: `results/phase4/`
+- `per_run_metrics.csv`, `scenario_summary.csv`, `paired_vs_static.csv`, and
+  `paired_summary_ci.csv` contain measurements and paired comparisons.
+- `simulation_log.csv` and `routing_decisions.csv` contain per-step/link logs
+  and every controller decision, including rejected and delayed actions.
+- `routing_comparison.png` plots results measured by the simulator.
+- `experiment_config.json` records seeds and controller settings.
+
+The final experiment uses a two-step action delay, six-step target-link
+cooldown, a 0.85 reactive trigger, and a 95% projected-capacity reserve. These
+settings are fixed before final evaluation and are not tuned against its seeds.
+The GRU and GNN use their saved Phase 3.6 validation thresholds.
+
+### Phase 4 interpretation and limitations
+
+All network measurements are simulated. The simulator has finite per-direction
+queues and capacity-bounded packet service, but computes interval-level queue
+delay and does not preserve packet identities across every hop. Therefore the
+exported packet delivery ratio and packet loss fields are explicitly
+hop-level proxies, and delivered throughput is a sum of delivered link-hop
+Mbps; none is an end-to-end packet-level measurement. Congestion duration is
+the number of intervals in which any directed link reaches 85% utilization.
+Successful avoidance counts an applied reroute whose target link stays below
+85% utilization during the next two measured intervals; it is an operational
+indicator, not a causal counterfactual proof.
+
+Phase 3.6 classifiers were trained under static routing. Applying their
+decisions changes the input distribution and can create feedback effects, so
+closed-loop generalization is uncertain. Congestion is scenario-dependent,
+especially for the sudden unannounced burst, and five evaluation seeds per
+scenario provide only modest statistical power. Confidence intervals use a
+normal approximation over paired seeds. No real traffic was used.
+
 Academic project for studying **simulated** network congestion and proactive traffic management. The completed phases provide a deterministic NetworkX topology, full-duplex directional queues, traffic calibration, temporal prediction datasets, and graph structures for a later GNN. All measurements are simulated; they do not represent a real network.
 
 ## Setup
