@@ -79,3 +79,20 @@ python -m unittest discover -s tests -v
 ```
 
 Phase 3 ends with model training and evaluation. Proactive routing and the dashboard are not part of this phase.
+
+## Phase 3.5: fresh-seed prediction and event diagnostics
+
+The Phase 3.5 study reserves seed groups 1000–1029 independently of the earlier dataset. Run it with the project virtual environment after installing requirements:
+
+```bash
+python scripts/phase35_experiment.py --seeds 30 --seed-start 1000 --steps 60 --epochs 12 --out results/phase3_5 --device auto
+```
+
+It regenerates deterministic matching scenarios at 1, 3, and 5 step horizons, fits each horizon with training-only normalization, and holds out whole seed groups. Model and threshold selection use only validation. The final test arrays are opened once after the selection is frozen. Outputs include per-horizon measurement data and checkpoints, `validation_comparison.csv`, `final_test_comparison.csv`, event diagnostics, plots, a frozen selection record, and `DIAGNOSTIC_REPORT.md`. A thresholded regression score is not a dedicated onset classifier; review the report's event-onset metrics and GO/NO-GO recommendation before any routing integration. Results are simulator measurements only.
+
+To reproduce the earlier tests and the Phase 3.5 experiment environment:
+
+```bash
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
