@@ -54,4 +54,28 @@ Run the automated checks:
 python -m unittest discover -s tests -v
 ```
 
-The tests cover topology and routing, packet/queue bounds, deterministic generation, direction-aware graph connectivity, temporal alignment, seed isolation, and training-only normalization. GNN training and the dashboard are later phases and are not included yet.
+The tests cover topology and routing, packet/queue bounds, deterministic generation, direction-aware graph connectivity, temporal alignment, seed isolation, and training-only normalization.
+
+## Phase 3: temporal GNN training and evaluation
+
+Install the expanded requirements, then train the non-graph GRU, standard temporal GNN, and congestion-weighted temporal GNN. Training and early stopping read only the training and validation splits; the test split is loaded by the separate evaluation command after model selection.
+
+```bash
+python -m pip install -r requirements.txt
+python scripts/train_models.py --data-dir data/generated/phase2 --output-dir results/phase3 --batch-size 32 --epochs 60 --learning-rate 0.001 --hidden-dim 64 --dropout 0.2 --patience 8 --seed 42 --device auto
+python scripts/evaluate_models.py --data-dir data/generated/phase2 --experiment-dir results/phase3 --device auto
+```
+
+`--device auto` selects Apple Silicon MPS when PyTorch reports it available, then CUDA, then CPU. Use `--device cpu` to force CPU. The model uses two directed PyG `GCNConv` layers shared across the ten input times, a per-link GRU, and a sigmoid utilization output. GCN messages follow the stored source-to-target edges; the model does not symmetrize the topology. The regression output is bounded to [0, 1].
+
+Training compares standard MSE with a congestion-weighted MSE. The positive class weight is derived from training labels only as `min(sqrt(negative_count / positive_count), 20)`. Validation MAE selects the best GNN variant. Regression congestion metrics use the fixed 0.85 prediction and target threshold. A separate classification cutoff is selected by validation F1 and reported on test; test labels are never used to select a cutoff. Average precision is reported as PR-AUC.
+
+Artifacts are written under `results/phase3/`: `checkpoints/` (ignored by Git), configuration and training histories, `evaluation_metrics.json`, `model_comparison.csv`, `test_predictions.csv`, and seven PNG evaluation plots. These are actual results from the saved simulated dataset; training may be rerun deterministically with the same command and seed.
+
+Run all existing and Phase 3 checks with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Phase 3 ends with model training and evaluation. Proactive routing and the dashboard are not part of this phase.

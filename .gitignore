@@ -38,6 +38,7 @@ data/generated/
 data/phase1_measurements.csv
 results/phase1_5/
 results/phase2/
+results/phase3/
 simulation_outputs/
 datasets/generated/
 
