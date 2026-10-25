@@ -1,0 +1,63 @@
+# Python environments and bytecode
+venv/
+.venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, type-checker, and lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+
+# Editor and operating system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Generated simulation data and experiment outputs
+data/generated/
+data/phase1_measurements.csv
+results/phase1_5/
+results/phase2/
+simulation_outputs/
+datasets/generated/
+
+# Model artifacts and checkpoints
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+checkpoints/
+models/
+
+# Logs, temporary files, and build/package artifacts
+*.log
+*.tmp
+*.temp
+*.bak
+tmp/
+temp/
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
